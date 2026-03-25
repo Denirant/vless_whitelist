@@ -2,8 +2,8 @@
 Checker — фильтрация VLESS через sing-box (по мотивам vless_config_updater).
 Источник: zieng2/wl → vless_lite.txt
 """
-import os, json, time, socket, asyncio, logging, tempfile
-from urllib.parse import urlparse, parse_qs
+import os, json, time, socket, asyncio, logging, tempfile, ipaddress
+from urllib.parse import urlparse, parse_qs, unquote
 import httpx
 
 log = logging.getLogger("checker")
@@ -13,6 +13,7 @@ MAX_NODES = int(os.environ.get("MAX_NODES", "35"))
 SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
 CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "6"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
+RU_RATIO = float(os.environ.get("RU_RATIO", "0.4"))  # 40% RU, 60% non-RU
 SOURCE_URL = os.environ.get(
     "SOURCE_URL",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
@@ -23,6 +24,46 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
+
+
+def _node_label(uri: str) -> str:
+    frag = urlparse(uri).fragment or ""
+    return unquote(frag).lower()
+
+
+def _is_ru_node(uri: str) -> bool:
+    label = _node_label(uri)
+    ru_marks = (
+        "ru", "russia", "moscow", "spb", "russian", "рос", "мск", "спб"
+    )
+    if any(mark in label for mark in ru_marks):
+        return True
+    try:
+        host = urlparse(uri).hostname
+        if host:
+            ip = ipaddress.ip_address(host)
+            return ip.is_private or str(ip).startswith(("5.", "31.", "37.", "45.", "46.", "62.", "77.", "78.", "79.", "80.", "81.", "82.", "83.", "84.", "85.", "87.", "88.", "89.", "90.", "91.", "92.", "93.", "94.", "95.", "109.", "176.", "178.", "185.", "188.", "193.", "194.", "195.", "212.", "213.", "217."))
+    except Exception:
+        pass
+    return False
+
+
+def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
+    if not results:
+        return []
+    ru = sorted([r for r in results if r[2]], key=lambda x: x[1])
+    non_ru = sorted([r for r in results if not r[2]], key=lambda x: x[1])
+    ru_target = min(len(ru), max(1, round(MAX_NODES * RU_RATIO))) if ru else 0
+    non_ru_target = min(len(non_ru), MAX_NODES - ru_target)
+    if non_ru_target < MAX_NODES - ru_target:
+        ru_target = min(len(ru), MAX_NODES - non_ru_target)
+    selected = non_ru[:non_ru_target] + ru[:ru_target]
+    if len(selected) < MAX_NODES:
+        rest = non_ru[non_ru_target:] + ru[ru_target:]
+        rest.sort(key=lambda x: x[1])
+        selected.extend(rest[: MAX_NODES - len(selected)])
+    selected.sort(key=lambda x: x[1])
+    return [uri for uri, _, _ in selected[:MAX_NODES]]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:
@@ -102,7 +143,7 @@ async def _measure_speed(proxy: str, timeout: int = 5) -> float:
         return 0.0
 
 
-async def _check_one(uri: str, sem: asyncio.Semaphore) -> str | None:
+async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool] | None:
     async with sem:
         port = _free_port()
         cfg = _vless_to_singbox(uri, port)
@@ -117,15 +158,18 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> str | None:
             await asyncio.sleep(0.8)
             proxy = f"http://127.0.0.1:{port}"
             try:
+                started = time.perf_counter()
                 async with httpx.AsyncClient(proxy=proxy, timeout=CHECK_TIMEOUT) as c:
                     r = await c.get("https://www.cloudflare.com")
                     r.raise_for_status()
+                latency = time.perf_counter() - started
                 if SPEED_LIMIT > 0:
                     spd = await _measure_speed(proxy)
                     if spd < SPEED_LIMIT:
                         return None
-                log.info(f"OK: {uri.strip()[:80]}")
-                return uri.strip()
+                is_ru = _is_ru_node(uri)
+                log.info(f"OK: {'RU' if is_ru else 'INT'} {latency:.3f}s {uri.strip()[:80]}")
+                return uri.strip(), latency, is_ru
             except Exception:
                 return None
             finally:
@@ -165,5 +209,8 @@ async def fetch_and_check() -> list[str]:
     sem = asyncio.Semaphore(CONCURRENCY)
     results = await asyncio.gather(*[_check_one(u, sem) for u in lines])
     good = [r for r in results if r]
-    log.info(f"Рабочих: {len(good)} из {len(lines)}")
-    return good[:MAX_NODES]
+    ru_count = len([r for r in good if r[2]])
+    non_ru_count = len(good) - ru_count
+    selected = _pick_mixed(good)
+    log.info(f"Рабочих: {len(good)} из {len(lines)} | RU={ru_count} INT={non_ru_count} | selected={len(selected)}")
+    return selected

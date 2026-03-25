@@ -144,7 +144,10 @@ def ucounts():
 def sub_url(token):
     base = get_setting("base_url") or BASE_URL
     if base:
-        return f"{base.rstrip('/')}/sub/{token}"
+        b = base.rstrip("/")
+        if not b.startswith("http://") and not b.startswith("https://"):
+            b = f"https://{b}"
+        return f"{b}/sub/{token}"
     return f"http://localhost:{HTTP_PORT}/sub/{token}"
 
 def display_name(u):

@@ -305,11 +305,10 @@ class SubHandler(BaseHTTPRequestHandler):
             if not head_only: self.wfile.write(b"Not ready")
             return
 
-        # Каждый запрос — случайный набор из MAX_NODES нод
+        # Отдаём все рабочие ноды, перемешанные случайно
         import random
         lines = PF.read_text().strip().splitlines()
         random.shuffle(lines)
-        lines = lines[:MAX_NODES]
         body = "\n".join(lines) + "\n"
         payload = base64.b64encode(body.encode()).decode().encode()
         exp = int(datetime.fromisoformat(u["sub_until"]).timestamp()) if u["sub_until"] else 9999999999

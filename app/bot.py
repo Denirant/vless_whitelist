@@ -253,7 +253,14 @@ class SubHandler(BaseHTTPRequestHandler):
             if not head_only: self.wfile.write(b"Not ready")
             return
 
-        payload = SF.read_bytes()
+        # Per-user shuffle: каждый юзер получает ноды в своём порядке
+        import random, hashlib
+        lines = PF.read_text().strip().splitlines()
+        seed = int(hashlib.md5(token.encode()).hexdigest(), 16)
+        rng = random.Random(seed ^ int(time.time()) // 3600)
+        rng.shuffle(lines)
+        body = "\n".join(lines) + "\n"
+        payload = base64.b64encode(body.encode()).decode().encode()
         exp = int(datetime.fromisoformat(u["sub_until"]).timestamp()) if u["sub_until"] else 9999999999
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -858,8 +865,8 @@ def run_bot():
                 last_expiry_check = now
                 try: check_expiry()
                 except: pass
-            # Автообновление нод каждые 3 часа
-            if now - last_node_update > 10800:
+            # Автообновление нод каждые 6 часов
+            if now - last_node_update > 21600:
                 last_node_update = now
                 threading.Thread(target=do_update, args=(True,), daemon=True).start()
 

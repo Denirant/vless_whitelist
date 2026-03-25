@@ -243,7 +243,7 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_header("subscription-userinfo",
                              "upload=0;download=0;total=0;expire=1")
             self.send_header("profile-update-interval", "1")
-            self.send_header("profile-title", "NoFussVpn | Обход глушилок")
+            self.send_header("profile-title", base64.b64encode("NoFussVpn | Обход глушилок".encode()).decode())
             self.end_headers()
             if not head_only: self.wfile.write(payload)
             return

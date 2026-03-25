@@ -243,7 +243,7 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_header("subscription-userinfo",
                              "upload=0;download=0;total=0;expire=1")
             self.send_header("profile-update-interval", "1")
-            self._headers_buffer.append(b"profile-title: NoFussVpn | \xd0\x9e\xd0\xb1\xd1\x85\xd0\xbe\xd0\xb4 \xd0\xb1\xd0\xbb\xd0\xbe\xd0\xba\xd0\xb8\xd1\x80\xd0\xbe\xd0\xb2\xd0\xbe\xd0\xba\r\n")
+            self._headers_buffer.append(b"profile-title: NoFussVPN")
             self.end_headers()
             if not head_only: self.wfile.write(payload)
             return
@@ -261,7 +261,7 @@ class SubHandler(BaseHTTPRequestHandler):
         self.send_header("subscription-userinfo",
                          f"upload=0;download=0;total=0;expire={exp}")
         self.send_header("profile-update-interval", "1")
-        self._headers_buffer.append(b"profile-title: NoFussVpn | \xd0\x9e\xd0\xb1\xd1\x85\xd0\xbe\xd0\xb4 \xd0\xb1\xd0\xbb\xd0\xbe\xd0\xba\xd0\xb8\xd1\x80\xd0\xbe\xd0\xb2\xd0\xbe\xd0\xba\r\n")
+        self._headers_buffer.append(b"profile-title: NoFussVPN")
         self.send_header("content-disposition", 'attachment; filename="nofuss.txt"')
         self.end_headers()
         if not head_only: self.wfile.write(payload)

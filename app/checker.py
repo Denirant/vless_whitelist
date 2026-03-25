@@ -95,7 +95,7 @@ def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
         rest.sort(key=lambda x: x[1])
         selected.extend(rest[: MAX_NODES - len(selected)])
     selected.sort(key=lambda x: x[1])
-    return [uri for uri, _, _ in selected[:MAX_NODES]]
+    return [uri for uri, _, _ in selected]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:

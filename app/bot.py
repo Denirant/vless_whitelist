@@ -16,6 +16,7 @@ ADMIN_ID  = int(os.environ.get("ADMIN_ID", "0"))
 BASE_URL  = os.environ.get("BASE_URL", "")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8080"))
 MAX_DEVICES = int(os.environ.get("MAX_DEVICES", "3"))
+MAX_NODES = int(os.environ.get("MAX_NODES", "45"))
 NOTIFY_DAYS = [3, 1]
 
 DATA = Path("/app/data")
@@ -304,12 +305,13 @@ class SubHandler(BaseHTTPRequestHandler):
             if not head_only: self.wfile.write(b"Not ready")
             return
 
-        # Per-user shuffle: каждый юзер получает ноды в своём порядке
+        # Per-user shuffle: каждый юзер получает уникальный набор из MAX_NODES нод
         import random, hashlib
         lines = PF.read_text().strip().splitlines()
         seed = int(hashlib.md5(token.encode()).hexdigest(), 16)
         rng = random.Random(seed ^ int(time.time()) // 3600)
         rng.shuffle(lines)
+        lines = lines[:MAX_NODES]
         body = "\n".join(lines) + "\n"
         payload = base64.b64encode(body.encode()).decode().encode()
         exp = int(datetime.fromisoformat(u["sub_until"]).timestamp()) if u["sub_until"] else 9999999999

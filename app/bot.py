@@ -15,6 +15,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID  = int(os.environ.get("ADMIN_ID", "0"))
 BASE_URL  = os.environ.get("BASE_URL", "")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8080"))
+MAX_DEVICES = int(os.environ.get("MAX_DEVICES", "3"))
 NOTIFY_DAYS = [3, 1]
 
 DATA = Path("/app/data")
@@ -53,6 +54,11 @@ def init_db():
             created_at TEXT DEFAULT(datetime('now')), notified_days TEXT DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS devices(
+            token TEXT NOT NULL, hwid TEXT NOT NULL, last_seen TEXT,
+            device_info TEXT DEFAULT '',
+            PRIMARY KEY(token, hwid)
+        );
         """)
         if ADMIN_ID:
             d.execute("INSERT OR IGNORE INTO users(id,username,first_name,status,sub_until)"
@@ -125,6 +131,30 @@ def uactive():
 def utoken(t):
     with _db() as d:
         return d.execute("SELECT * FROM users WHERE token=?", (t,)).fetchone()
+
+def device_check(token, hwid, device_info=""):
+    """Проверить/зарегистрировать устройство. Вернуть (ok, count)."""
+    if not hwid or MAX_DEVICES <= 0:
+        return True, 0
+    now = datetime.now(timezone.utc).isoformat()
+    with _db() as d:
+        d.execute("INSERT INTO devices(token,hwid,last_seen,device_info) VALUES(?,?,?,?)"
+                  " ON CONFLICT(token,hwid) DO UPDATE SET last_seen=?,device_info=?",
+                  (token, hwid, now, device_info, now, device_info))
+        cnt = d.execute("SELECT COUNT(*) FROM devices WHERE token=?", (token,)).fetchone()[0]
+    return cnt <= MAX_DEVICES, cnt
+
+def device_count(token):
+    with _db() as d:
+        return d.execute("SELECT COUNT(*) FROM devices WHERE token=?", (token,)).fetchone()[0]
+
+def device_list(token):
+    with _db() as d:
+        return d.execute("SELECT hwid, device_info, last_seen FROM devices WHERE token=? ORDER BY last_seen DESC", (token,)).fetchall()
+
+def device_reset(token):
+    with _db() as d:
+        d.execute("DELETE FROM devices WHERE token=?", (token,))
 
 def ulinks():
     with _db() as d:
@@ -217,6 +247,8 @@ def do_update(notify_admin=False) -> str:
 class SubHandler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
+    HWID_EXCEEDED_MSG = "# NoFuss\n# Достигнут предел количества подключенных устройств на эту подписку"
+
     def _serve(self, head_only=False):
         path = self.path.rstrip("/")
         if not path.startswith("/sub/"):
@@ -225,11 +257,9 @@ class SubHandler(BaseHTTPRequestHandler):
             return
         token = path[5:].split("?")[0].split("/")[0]
 
-        # DEBUG: логируем все заголовки запроса
-        log.info(f"=== SUB REQUEST from {self.client_address[0]} ===")
-        for k, v in self.headers.items():
-            log.info(f"  {k}: {v}")
-        log.info(f"=== END HEADERS ===")
+        hwid = self.headers.get("x-hwid", "")
+        device_info = f"{self.headers.get('user-agent', '')} | {self.headers.get('x-device-model', '')} | {self.headers.get('x-device-os', '')}"
+
         u = utoken(token)
         if not u:
             self.send_response(403); self.end_headers()
@@ -248,11 +278,26 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("subscription-userinfo",
                              "upload=0;download=0;total=0;expire=1")
-            self.send_header("profile-update-interval", "1")
+            self.send_header("profile-update-interval", "6")
             self._headers_buffer.append(b"profile-title: NoFussVPN")
             self.end_headers()
             if not head_only: self.wfile.write(payload)
             return
+
+        # HWID check
+        if hwid and MAX_DEVICES > 0:
+            ok, cnt = device_check(token, hwid, device_info)
+            if not ok:
+                log.warning(f"HWID limit exceeded: token={token[:8]}... hwid={hwid} devices={cnt}/{MAX_DEVICES}")
+                payload = base64.b64encode(self.HWID_EXCEEDED_MSG.encode())
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("profile-update-interval", "6")
+                self._headers_buffer.append(b"profile-title: NoFussVPN")
+                self.end_headers()
+                if not head_only: self.wfile.write(payload)
+                return
 
         if not sub_ready():
             self.send_response(503); self.end_headers()
@@ -273,7 +318,7 @@ class SubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("subscription-userinfo",
                          f"upload=0;download=0;total=0;expire={exp}")
-        self.send_header("profile-update-interval", "1")
+        self.send_header("profile-update-interval", "6")
         self._headers_buffer.append(b"profile-title: NoFussVPN")
         self.send_header("content-disposition", 'attachment; filename="nofuss.txt"')
         self.end_headers()
@@ -387,7 +432,8 @@ def ik_manage(uid, lst="all"):
              {"text": "+6м", "callback_data": f"ext:{uid}:6:{lst}"},
              {"text": "+12м", "callback_data": f"ext:{uid}:12:{lst}"}]]
     if u and u["status"] == "active" and u["sub_until"]:
-        rows.append([{"text": "🔄 Обнулить", "callback_data": f"reset:{uid}:{lst}"}])
+        rows.append([{"text": "🔄 Обнулить", "callback_data": f"reset:{uid}:{lst}"},
+                      {"text": "📱 Сброс устройств", "callback_data": f"devreset:{uid}:{lst}"}])
     ar = []
     if u and u["status"] != "blocked":
         ar.append({"text": "🚫 Блок", "callback_data": f"block:{uid}:{lst}"})
@@ -487,12 +533,15 @@ def user_card_text(uid, lst="all"):
     tok = u["token"] or ""
     url = sub_url(tok) if tok else "—"
     em = STATUS_EMOJI.get(u["status"], "❓")
+    dc = device_count(tok) if tok else 0
+    devices_line = f"📱 Устройств: <b>{dc}/{MAX_DEVICES}</b>"
     txt = (f"{em} <b>{display_name(u)}</b>\n"
            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
            f"🆔 ID: <code>{u['id']}</code>\n"
            f"📌 Статус: <b>{u['status']}</b>\n"
            f"📅 До: <b>{until}</b>\n"
            f"⏳ Осталось: <b>{left}</b>\n"
+           f"{devices_line}\n"
            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
            f"🔗 URL:\n<code>{url}</code>")
     return ik_manage(uid, lst), txt
@@ -782,6 +831,17 @@ def handle_callback(cb):
         if tuid > 0:
             try: send_msg(tuid, "⚠️ Подписка обнулена", kb_new())
             except: pass
+    elif data.startswith("devreset:"):
+        parts = data.split(":")
+        tuid, lst = int(parts[1]), parts[2] if len(parts) > 2 else "all"
+        u = uget(tuid)
+        if u and u["token"]:
+            device_reset(u["token"])
+        if lst == "links":
+            kb, txt = link_card_text(tuid)
+        else:
+            kb, txt = user_card_text(tuid, lst)
+        if kb: edit_msg(cid, mid, txt, kb)
     elif data.startswith("block:"):
         parts = data.split(":")
         tuid, lst = int(parts[1]), parts[2] if len(parts) > 2 else "all"
@@ -871,8 +931,8 @@ def run_bot():
                 last_expiry_check = now
                 try: check_expiry()
                 except: pass
-            # Автообновление нод каждые 6 часов
-            if now - last_node_update > 21600:
+            # Автообновление нод каждые 3 часа
+            if now - last_node_update > 10800:
                 last_node_update = now
                 threading.Thread(target=do_update, args=(True,), daemon=True).start()
 

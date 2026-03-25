@@ -305,12 +305,10 @@ class SubHandler(BaseHTTPRequestHandler):
             if not head_only: self.wfile.write(b"Not ready")
             return
 
-        # Per-user shuffle: каждый юзер получает уникальный набор из MAX_NODES нод
-        import random, hashlib
+        # Каждый запрос — случайный набор из MAX_NODES нод
+        import random
         lines = PF.read_text().strip().splitlines()
-        seed = int(hashlib.md5(token.encode()).hexdigest(), 16)
-        rng = random.Random(seed ^ int(time.time()) // 3600)
-        rng.shuffle(lines)
+        random.shuffle(lines)
         lines = lines[:MAX_NODES]
         body = "\n".join(lines) + "\n"
         payload = base64.b64encode(body.encode()).decode().encode()

@@ -8,6 +8,25 @@ import httpx
 
 log = logging.getLogger("checker")
 
+# Прогресс обновления (потокобезопасный)
+import threading
+_progress_lock = threading.Lock()
+_progress = {"active": False, "total": 0, "done": 0}
+
+def get_progress() -> dict:
+    with _progress_lock:
+        return dict(_progress)
+
+def _set_progress(active=False, total=0, done=0):
+    with _progress_lock:
+        _progress["active"] = active
+        _progress["total"] = total
+        _progress["done"] = done
+
+def _inc_progress():
+    with _progress_lock:
+        _progress["done"] += 1
+
 SING_BOX = os.environ.get("SING_BOX_PATH", "/usr/local/bin/sing-box")
 MAX_NODES = int(os.environ.get("MAX_NODES", "35"))
 SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
@@ -148,6 +167,7 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
         port = _free_port()
         cfg = _vless_to_singbox(uri, port)
         if not cfg:
+            _inc_progress()
             return None
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir="/tmp")
         try:
@@ -173,6 +193,7 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
             except Exception:
                 return None
             finally:
+                _inc_progress()
                 try:
                     if proc.returncode is None:
                         proc.terminate()
@@ -206,8 +227,10 @@ async def fetch_and_check() -> list[str]:
 
     lines = [l.strip() for l in raw.splitlines() if l.strip().startswith("vless://")]
     log.info(f"Найдено {len(lines)} VLESS, проверяю (concurrency={CONCURRENCY})...")
+    _set_progress(active=True, total=len(lines), done=0)
     sem = asyncio.Semaphore(CONCURRENCY)
     results = await asyncio.gather(*[_check_one(u, sem) for u in lines])
+    _set_progress(active=False)
     good = [r for r in results if r]
     ru_count = len([r for r in good if r[2]])
     non_ru_count = len(good) - ru_count

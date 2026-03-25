@@ -8,7 +8,7 @@ from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta, timezone
 
-from checker import fetch_and_check
+from checker import fetch_and_check, get_progress
 
 # ── Конфиг ──
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -419,13 +419,19 @@ def panel_text():
     lt = LU.read_text().strip() if LU.exists() else "ещё не обновлялись"
     base = get_setting("base_url") or BASE_URL or f"http://localhost:{HTTP_PORT}"
     nc = node_count()
+    prog = get_progress()
+    if prog["active"] and prog["total"] > 0:
+        pct = round(prog["done"] / prog["total"] * 100)
+        update_line = f"🔄 Обновление: <b>{pct}%</b> ({prog['done']}/{prog['total']})"
+    else:
+        update_line = f"🕐 Обновлено: {lt}"
     return (f"📊 <b>Панель NoFuss</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ Активных: <b>{c['act']}</b>  ⏳ Заявок: <b>{c['pnd']}</b>  "
             f"🚫 Заблок: <b>{c['blk']}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 Нод: <b>{nc}</b>\n"
-            f"🕐 Обновлено: {lt}\n"
+            f"{update_line}\n"
             f"🌐 URL: <code>{base}</code>")
 
 def user_list_text(filt="all"):

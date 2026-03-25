@@ -33,13 +33,14 @@ SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
 CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "6"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
 RU_RATIO = float(os.environ.get("RU_RATIO", "0.25"))  # 25% RU, 75% non-RU
-MAX_LATENCY = float(os.environ.get("MAX_LATENCY", "0.5"))
-MAX_RESULT = int(os.environ.get("MAX_RESULT", "150"))
+MAX_LATENCY = float(os.environ.get("MAX_LATENCY", "1.0"))
+MAX_RESULT = int(os.environ.get("MAX_RESULT", "100"))
 SOURCE_URLS = [
     s.strip() for s in os.environ.get(
         "SOURCE_URLS",
-        "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt,"
-        "https://raw.githubusercontent.com/whoahaow/rjsxrd/refs/heads/main/githubmirror/bypass/bypass-all.txt"
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt,"
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt,"
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
     ).split(",") if s.strip()
 ]
 
@@ -85,12 +86,12 @@ def _rename_node(uri: str, num: int) -> str:
     return f"{p[0]}#{quote(new_name)}"
 
 
-def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
+def _pick_mixed(results: list[tuple[str, float]]) -> list[str]:
     """Вернуть до MAX_RESULT лучших нод, отсортированных по latency."""
     if not results:
         return []
     results.sort(key=lambda x: x[1])
-    return [uri for uri, _, _ in results[:MAX_RESULT]]
+    return [uri for uri, _ in results[:MAX_RESULT]]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:
@@ -197,11 +198,8 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
                     spd = await _measure_speed(proxy)
                     if spd < SPEED_LIMIT:
                         return None
-                is_ru = _is_ru_node(uri)
-                if is_ru:
-                    return None
-                log.info(f"OK: INT {latency:.3f}s {uri.strip()[:80]}")
-                return uri.strip(), latency, False
+                log.info(f"OK: {latency:.3f}s {uri.strip()[:80]}")
+                return uri.strip(), latency
             except Exception:
                 return None
             finally:
@@ -259,8 +257,6 @@ async def fetch_and_check() -> list[str]:
     results = await asyncio.gather(*[_check_one(u, sem) for u in unique])
     _set_progress(active=False)
     good = [r for r in results if r]
-    ru_count = len([r for r in good if r[2]])
-    non_ru_count = len(good) - ru_count
     selected = _pick_mixed(good)
-    log.info(f"Рабочих: {len(good)} из {len(unique)} | RU={ru_count} INT={non_ru_count} | selected={len(selected)}")
+    log.info(f"Рабочих: {len(good)} из {len(unique)} | selected={len(selected)}")
     return selected

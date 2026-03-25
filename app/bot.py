@@ -819,15 +819,20 @@ def run_bot():
     offset = 0
     fail_count = 0
     last_expiry_check = 0
+    last_node_update = 0
 
     while True:
         try:
-            # Проверка истечений каждые 6 часов
             now = time.time()
+            # Проверка истечений каждые 6 часов
             if now - last_expiry_check > 21600:
                 last_expiry_check = now
                 try: check_expiry()
                 except: pass
+            # Автообновление нод каждые 6 часов
+            if now - last_node_update > 21600:
+                last_node_update = now
+                threading.Thread(target=do_update, daemon=True).start()
 
             resp = tg("getUpdates", {"offset": offset, "timeout": 30})
             fail_count = 0

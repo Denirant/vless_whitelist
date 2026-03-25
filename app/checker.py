@@ -129,11 +129,18 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> str | None:
             except Exception:
                 return None
             finally:
-                proc.terminate()
                 try:
-                    await asyncio.wait_for(proc.wait(), 2)
-                except asyncio.TimeoutError:
-                    proc.kill()
+                    if proc.returncode is None:
+                        proc.terminate()
+                        try:
+                            await asyncio.wait_for(proc.wait(), 2)
+                        except asyncio.TimeoutError:
+                            proc.kill()
+                            await proc.wait()
+                    else:
+                        await proc.wait()
+                except ProcessLookupError:
+                    pass
         finally:
             try:
                 os.unlink(tmp.name)

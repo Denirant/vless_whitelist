@@ -186,6 +186,8 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
                     r = await c.get("https://www.cloudflare.com")
                     r.raise_for_status()
                 latency = time.perf_counter() - started
+                if latency > 1.5:
+                    return None
                 if SPEED_LIMIT > 0:
                     spd = await _measure_speed(proxy)
                     if spd < SPEED_LIMIT:

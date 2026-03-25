@@ -33,10 +33,15 @@ SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
 CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "6"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
 RU_RATIO = float(os.environ.get("RU_RATIO", "0.25"))  # 25% RU, 75% non-RU
-SOURCE_URL = os.environ.get(
-    "SOURCE_URL",
-    "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
-)
+MAX_LATENCY = float(os.environ.get("MAX_LATENCY", "0.5"))
+MAX_RESULT = int(os.environ.get("MAX_RESULT", "150"))
+SOURCE_URLS = [
+    s.strip() for s in os.environ.get(
+        "SOURCE_URLS",
+        "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt,"
+        "https://raw.githubusercontent.com/whoahaow/rjsxrd/refs/heads/main/githubmirror/bypass/bypass-all.txt"
+    ).split(",") if s.strip()
+]
 
 
 def _free_port() -> int:
@@ -81,11 +86,11 @@ def _rename_node(uri: str, num: int) -> str:
 
 
 def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
-    """Вернуть ВСЕ рабочие ноды, отсортированные по latency."""
+    """Вернуть до MAX_RESULT лучших нод, отсортированных по latency."""
     if not results:
         return []
     results.sort(key=lambda x: x[1])
-    return [uri for uri, _, _ in results]
+    return [uri for uri, _, _ in results[:MAX_RESULT]]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:
@@ -186,15 +191,17 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
                     r = await c.get("https://www.cloudflare.com")
                     r.raise_for_status()
                 latency = time.perf_counter() - started
-                if latency > 1.5:
+                if latency > MAX_LATENCY:
                     return None
                 if SPEED_LIMIT > 0:
                     spd = await _measure_speed(proxy)
                     if spd < SPEED_LIMIT:
                         return None
                 is_ru = _is_ru_node(uri)
-                log.info(f"OK: {'RU' if is_ru else 'INT'} {latency:.3f}s {uri.strip()[:80]}")
-                return uri.strip(), latency, is_ru
+                if is_ru:
+                    return None
+                log.info(f"OK: INT {latency:.3f}s {uri.strip()[:80]}")
+                return uri.strip(), latency, False
             except Exception:
                 return None
             finally:
@@ -219,26 +226,41 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
 
 
 async def fetch_and_check() -> list[str]:
-    """Скачать ноды, проверить, вернуть до MAX_NODES рабочих URI."""
-    log.info(f"Скачиваю ноды из {SOURCE_URL[:60]}...")
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.get(SOURCE_URL)
-            r.raise_for_status()
-            raw = r.text
-    except Exception as e:
-        log.error(f"Не удалось скачать: {e}")
-        return []
+    """Скачать ноды из всех источников, проверить, вернуть до MAX_RESULT лучших URI."""
+    all_lines: list[str] = []
+    async with httpx.AsyncClient(timeout=15) as c:
+        for url in SOURCE_URLS:
+            try:
+                log.info(f"Скачиваю ноды из {url[:60]}...")
+                r = await c.get(url)
+                r.raise_for_status()
+                lines = [l.strip() for l in r.text.splitlines() if l.strip().startswith("vless://")]
+                log.info(f"  → {len(lines)} VLESS из {url[:60]}")
+                all_lines.extend(lines)
+            except Exception as e:
+                log.error(f"Не удалось скачать {url[:60]}: {e}")
 
-    lines = [l.strip() for l in raw.splitlines() if l.strip().startswith("vless://")]
-    log.info(f"Найдено {len(lines)} VLESS, проверяю (concurrency={CONCURRENCY})...")
-    _set_progress(active=True, total=len(lines), done=0)
+    # Дедупликация по host:port+uuid
+    seen = set()
+    unique = []
+    for uri in all_lines:
+        try:
+            p = urlparse(uri)
+            key = f"{p.hostname}:{p.port}:{p.username or p.netloc.split('@')[0]}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(uri)
+        except Exception:
+            unique.append(uri)
+
+    log.info(f"Всего {len(unique)} уникальных VLESS, проверяю (concurrency={CONCURRENCY})...")
+    _set_progress(active=True, total=len(unique), done=0)
     sem = asyncio.Semaphore(CONCURRENCY)
-    results = await asyncio.gather(*[_check_one(u, sem) for u in lines])
+    results = await asyncio.gather(*[_check_one(u, sem) for u in unique])
     _set_progress(active=False)
     good = [r for r in results if r]
     ru_count = len([r for r in good if r[2]])
     non_ru_count = len(good) - ru_count
     selected = _pick_mixed(good)
-    log.info(f"Рабочих: {len(good)} из {len(lines)} | RU={ru_count} INT={non_ru_count} | selected={len(selected)}")
+    log.info(f"Рабочих: {len(good)} из {len(unique)} | RU={ru_count} INT={non_ru_count} | selected={len(selected)}")
     return selected

@@ -81,21 +81,11 @@ def _rename_node(uri: str, num: int) -> str:
 
 
 def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
+    """Вернуть ВСЕ рабочие ноды, отсортированные по latency."""
     if not results:
         return []
-    ru = sorted([r for r in results if r[2]], key=lambda x: x[1])
-    non_ru = sorted([r for r in results if not r[2]], key=lambda x: x[1])
-    ru_target = min(len(ru), max(1, round(MAX_NODES * RU_RATIO))) if ru else 0
-    non_ru_target = min(len(non_ru), MAX_NODES - ru_target)
-    if non_ru_target < MAX_NODES - ru_target:
-        ru_target = min(len(ru), MAX_NODES - non_ru_target)
-    selected = non_ru[:non_ru_target] + ru[:ru_target]
-    if len(selected) < MAX_NODES:
-        rest = non_ru[non_ru_target:] + ru[ru_target:]
-        rest.sort(key=lambda x: x[1])
-        selected.extend(rest[: MAX_NODES - len(selected)])
-    selected.sort(key=lambda x: x[1])
-    return [uri for uri, _, _ in selected]
+    results.sort(key=lambda x: x[1])
+    return [uri for uri, _, _ in results]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:

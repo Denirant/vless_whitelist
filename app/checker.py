@@ -28,11 +28,11 @@ def _inc_progress():
         _progress["done"] += 1
 
 SING_BOX = os.environ.get("SING_BOX_PATH", "/usr/local/bin/sing-box")
-MAX_NODES = int(os.environ.get("MAX_NODES", "35"))
+MAX_NODES = int(os.environ.get("MAX_NODES", "45"))
 SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
 CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "6"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
-RU_RATIO = float(os.environ.get("RU_RATIO", "0.4"))  # 40% RU, 60% non-RU
+RU_RATIO = float(os.environ.get("RU_RATIO", "0.25"))  # 25% RU, 75% non-RU
 SOURCE_URL = os.environ.get(
     "SOURCE_URL",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
@@ -67,6 +67,13 @@ def _is_ru_node(uri: str) -> bool:
     return False
 
 
+def _rename_node(uri: str, num: int, is_ru: bool) -> str:
+    """Заменить fragment (имя ноды) на порядковый номер с меткой RU/INT."""
+    tag = "RU" if is_ru else "INT"
+    p = uri.split("#", 1)
+    return f"{p[0]}#{tag}+%23{num}"
+
+
 def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
     if not results:
         return []
@@ -82,7 +89,7 @@ def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
         rest.sort(key=lambda x: x[1])
         selected.extend(rest[: MAX_NODES - len(selected)])
     selected.sort(key=lambda x: x[1])
-    return [uri for uri, _, _ in selected[:MAX_NODES]]
+    return [_rename_node(uri, i + 1, is_ru) for i, (uri, _, is_ru) in enumerate(selected[:MAX_NODES])]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:

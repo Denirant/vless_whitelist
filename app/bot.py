@@ -243,7 +243,7 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_header("subscription-userinfo",
                              "upload=0;download=0;total=0;expire=1")
             self.send_header("profile-update-interval", "1")
-            self.send_header("profile-title", base64.b64encode("NoFussVpn | Обход глушилок".encode()).decode())
+            self.send_header("profile-title", urllib.parse.quote("NoFussVpn | Обход глушилок"))
             self.end_headers()
             if not head_only: self.wfile.write(payload)
             return
@@ -261,7 +261,7 @@ class SubHandler(BaseHTTPRequestHandler):
         self.send_header("subscription-userinfo",
                          f"upload=0;download=0;total=0;expire={exp}")
         self.send_header("profile-update-interval", "1")
-        self.send_header("profile-title", base64.b64encode("NoFussVpn | Обход глушилок".encode()).decode())
+        self.send_header("profile-title", urllib.parse.quote("NoFussVpn | Обход глушилок"))
         self.send_header("content-disposition", 'attachment; filename="nofuss.txt"')
         self.end_headers()
         if not head_only: self.wfile.write(payload)
@@ -282,7 +282,7 @@ API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 def tg(method, data):
     req = urllib.request.Request(f"{API}/{method}",
         data=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
 
 def send_msg(cid, text, kb=None):
@@ -847,6 +847,9 @@ def run_bot():
     last_expiry_check = 0
     last_node_update = 0
 
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max_workers=4)
+
     while True:
         try:
             now = time.time()
@@ -874,11 +877,11 @@ def run_bot():
                         if not txt: continue
                         uins(uid, un, fn)
                         if txt.startswith("/"):
-                            handle_command(cid, uid, un, fn, txt)
+                            pool.submit(handle_command, cid, uid, un, fn, txt)
                         else:
-                            handle_button(cid, uid, txt, un, fn)
+                            pool.submit(handle_button, cid, uid, txt, un, fn)
                     elif "callback_query" in upd:
-                        handle_callback(upd["callback_query"])
+                        pool.submit(handle_callback, upd["callback_query"])
                 except Exception as e:
                     log.error(f"Handler error: {e}", exc_info=True)
         except urllib.error.HTTPError as e:

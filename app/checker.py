@@ -39,6 +39,8 @@ SOURCE_URLS = [
     s.strip() for s in os.environ.get(
         "SOURCE_URLS",
         "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt,"
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt,"
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-SNI-RU-all.txt,"
         "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt,"
         "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
     ).split(",") if s.strip()
@@ -233,6 +235,8 @@ async def fetch_and_check() -> list[str]:
                 r = await c.get(url)
                 r.raise_for_status()
                 lines = [l.strip() for l in r.text.splitlines() if l.strip().startswith("vless://")]
+                # Пропускаем ноды с Russia в названии
+                lines = [l for l in lines if "russia" not in _node_label(l)]
                 log.info(f"  → {len(lines)} VLESS из {url[:60]}")
                 all_lines.extend(lines)
             except Exception as e:

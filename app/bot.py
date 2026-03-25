@@ -224,6 +224,12 @@ class SubHandler(BaseHTTPRequestHandler):
             if not head_only: self.wfile.write(b"Not found")
             return
         token = path[5:].split("?")[0].split("/")[0]
+
+        # DEBUG: логируем все заголовки запроса
+        log.info(f"=== SUB REQUEST from {self.client_address[0]} ===")
+        for k, v in self.headers.items():
+            log.info(f"  {k}: {v}")
+        log.info(f"=== END HEADERS ===")
         u = utoken(token)
         if not u:
             self.send_response(403); self.end_headers()

@@ -3,7 +3,7 @@ Checker — фильтрация VLESS через sing-box (по мотивам 
 Источник: zieng2/wl → vless_lite.txt
 """
 import os, json, time, socket, asyncio, logging, tempfile, ipaddress
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
 import httpx
 
 log = logging.getLogger("checker")
@@ -67,11 +67,17 @@ def _is_ru_node(uri: str) -> bool:
     return False
 
 
-def _rename_node(uri: str, num: int, is_ru: bool) -> str:
-    """Заменить fragment (имя ноды) на порядковый номер с меткой RU/INT."""
-    tag = "RU" if is_ru else "INT"
+def _rename_node(uri: str, num: int) -> str:
+    """Заменить #число в имени ноды на порядковый номер."""
     p = uri.split("#", 1)
-    return f"{p[0]}#{tag}+%23{num}"
+    if len(p) < 2:
+        return uri
+    name = unquote(p[1]).strip()
+    import re
+    new_name = re.sub(r'#\d+', f'#{num}', name)
+    if new_name == name:
+        new_name = f"{name} #{num}"
+    return f"{p[0]}#{quote(new_name)}"
 
 
 def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
@@ -89,7 +95,7 @@ def _pick_mixed(results: list[tuple[str, float, bool]]) -> list[str]:
         rest.sort(key=lambda x: x[1])
         selected.extend(rest[: MAX_NODES - len(selected)])
     selected.sort(key=lambda x: x[1])
-    return [_rename_node(uri, i + 1, is_ru) for i, (uri, _, is_ru) in enumerate(selected[:MAX_NODES])]
+    return [_rename_node(uri, i + 1) for i, (uri, _, is_ru) in enumerate(selected[:MAX_NODES])]
 
 
 def _vless_to_singbox(uri: str, port: int) -> dict | None:

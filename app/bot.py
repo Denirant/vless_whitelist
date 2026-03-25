@@ -174,22 +174,39 @@ def node_count():
 # ═══════════════════════════════════════════════════════
 #  ОБНОВЛЕНИЕ НОД
 # ═══════════════════════════════════════════════════════
-def do_update() -> str:
+def do_update(notify_admin=False) -> str:
     if not _update_lock.acquire(blocking=False):
         return "⏳ Обновление уже идёт"
     try:
         good = asyncio.run(fetch_and_check())
         if not good:
-            return "❌ Ни одна нода не прошла проверку"
+            msg = "❌ Ни одна нода не прошла проверку (старые ноды сохранены)"
+            if notify_admin:
+                try: send_msg(ADMIN_ID, msg)
+                except: pass
+            return msg
         body = "\n".join(good) + "\n"
-        PF.write_text(body)
-        SF.write_text(base64.b64encode(body.encode()).decode())
+        # Атомарная замена — пишем во временные файлы, потом переименовываем
+        tmp_plain = PF.with_suffix(".tmp")
+        tmp_b64 = SF.with_suffix(".tmp")
+        tmp_plain.write_text(body)
+        tmp_b64.write_text(base64.b64encode(body.encode()).decode())
+        tmp_plain.replace(PF)
+        tmp_b64.replace(SF)
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         LU.write_text(now_str)
-        return f"✅ Обновлено: {len(good)} нод ({now_str})"
+        msg = f"✅ Обновлено: {len(good)} нод ({now_str})"
+        if notify_admin:
+            try: send_msg(ADMIN_ID, f"🔄 Авто-обновление\n{msg}")
+            except: pass
+        return msg
     except Exception as e:
         log.exception("do_update failed")
-        return f"❌ Ошибка: {e}"
+        msg = f"❌ Ошибка: {e}"
+        if notify_admin:
+            try: send_msg(ADMIN_ID, f"🔄 Авто-обновление\n{msg}")
+            except: pass
+        return msg
     finally:
         _update_lock.release()
 
@@ -224,9 +241,9 @@ class SubHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("subscription-userinfo",
-                             "upload=0;download=0;total=10737418240000;expire=1")
-            self.send_header("profile-update-interval", "24")
-            self.send_header("profile-title", "NoFuss")
+                             "upload=0;download=0;total=0;expire=1")
+            self.send_header("profile-update-interval", "1")
+            self.send_header("profile-title", "NoFussVpn | Обход глушилок")
             self.end_headers()
             if not head_only: self.wfile.write(payload)
             return
@@ -242,9 +259,9 @@ class SubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("subscription-userinfo",
-                         f"upload=0;download=0;total=10737418240000;expire={exp}")
-        self.send_header("profile-update-interval", "24")
-        self.send_header("profile-title", "NoFuss")
+                         f"upload=0;download=0;total=0;expire={exp}")
+        self.send_header("profile-update-interval", "1")
+        self.send_header("profile-title", "NoFussVpn | Обход глушилок")
         self.send_header("content-disposition", 'attachment; filename="nofuss.txt"')
         self.end_headers()
         if not head_only: self.wfile.write(payload)
@@ -832,10 +849,10 @@ def run_bot():
                 last_expiry_check = now
                 try: check_expiry()
                 except: pass
-            # Автообновление нод каждые 6 часов
-            if now - last_node_update > 21600:
+            # Автообновление нод каждые 3 часа
+            if now - last_node_update > 10800:
                 last_node_update = now
-                threading.Thread(target=do_update, daemon=True).start()
+                threading.Thread(target=do_update, args=(True,), daemon=True).start()
 
             resp = tg("getUpdates", {"offset": offset, "timeout": 30})
             fail_count = 0

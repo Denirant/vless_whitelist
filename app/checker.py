@@ -23,7 +23,6 @@ REPO_DIR = Path(os.environ.get("REPO_DIR", "/app/data/repo"))
 SOURCE_FILES = [
     "WHITE-CIDR-RU-checked.txt",
     "WHITE-CIDR-RU-all.txt",
-    "WHITE-SNI-RU-all.txt",
     "Vless-Reality-White-Lists-Rus-Mobile.txt",
     "Vless-Reality-White-Lists-Rus-Mobile-2.txt",
 ]
@@ -60,6 +59,8 @@ def fetch_and_check() -> list[str]:
         text = fpath.read_text(encoding="utf-8", errors="ignore")
         lines = [l.strip() for l in text.splitlines()
                  if l.strip().startswith("vless://")]
+        # Убираем ноды с "russia" в имени
+        lines = [l for l in lines if "russia" not in (urlparse(l).fragment or "").lower()]
         log.info(f"  {fname}: {len(lines)} VLESS")
         all_lines.extend(lines)
 

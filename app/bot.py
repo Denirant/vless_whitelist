@@ -209,7 +209,7 @@ def do_update(notify_admin=False) -> str:
     if not _update_lock.acquire(blocking=False):
         return "⏳ Обновление уже идёт"
     try:
-        good = asyncio.run(fetch_and_check())
+        good = fetch_and_check()
         if not good:
             msg = "❌ Ни одна нода не прошла проверку (старые ноды сохранены)"
             if notify_admin:

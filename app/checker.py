@@ -217,7 +217,7 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float] | No
 
 
 async def fetch_and_check() -> list[str]:
-    """Скачать ноды из всех источников, проверить, вернуть до MAX_RESULT лучших URI."""
+    """Скачать ноды из всех источников, отфильтровать Russia/Anycast, вернуть все."""
     all_lines: list[str] = []
     async with httpx.AsyncClient(timeout=15) as c:
         for url in SOURCE_URLS:
@@ -249,12 +249,5 @@ async def fetch_and_check() -> list[str]:
         except Exception:
             unique.append(uri)
 
-    log.info(f"Всего {len(unique)} уникальных VLESS, проверяю (concurrency={CONCURRENCY})...")
-    _set_progress(active=True, total=len(unique), done=0)
-    sem = asyncio.Semaphore(CONCURRENCY)
-    results = await asyncio.gather(*[_check_one(u, sem) for u in unique])
-    _set_progress(active=False)
-    good = [r for r in results if r]
-    selected = _pick_mixed(good)
-    log.info(f"Рабочих: {len(good)} из {len(unique)} | selected={len(selected)}")
-    return selected
+    log.info(f"Всего {len(unique)} уникальных VLESS (без пингования)")
+    return unique

@@ -28,13 +28,11 @@ def _inc_progress():
         _progress["done"] += 1
 
 SING_BOX = os.environ.get("SING_BOX_PATH", "/usr/local/bin/sing-box")
-MAX_NODES = int(os.environ.get("MAX_NODES", "45"))
-SPEED_LIMIT = int(os.environ.get("SPEED_LIMIT", "3"))
-CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "6"))
+CHECK_TIMEOUT = int(os.environ.get("CHECK_TIMEOUT", "8"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "10"))
-RU_RATIO = float(os.environ.get("RU_RATIO", "0.25"))  # 25% RU, 75% non-RU
-MAX_LATENCY = float(os.environ.get("MAX_LATENCY", "1.0"))
-MAX_RESULT = int(os.environ.get("MAX_RESULT", "100"))
+MAX_LATENCY = float(os.environ.get("MAX_LATENCY", "5.0"))
+MAX_RESULT = int(os.environ.get("MAX_RESULT", "300"))
+RETRIES = int(os.environ.get("RETRIES", "3"))
 SOURCE_URLS = [
     s.strip() for s in os.environ.get(
         "SOURCE_URLS",
@@ -159,21 +157,7 @@ def _vless_to_singbox(uri: str, port: int) -> dict | None:
         return None
 
 
-async def _measure_speed(proxy: str, timeout: int = 5) -> float:
-    try:
-        async with httpx.AsyncClient(proxy=proxy, timeout=timeout) as c:
-            start = time.perf_counter()
-            total = 0
-            async with c.stream("GET", "https://speed.cloudflare.com/__down?bytes=5000000") as r:
-                async for chunk in r.aiter_bytes():
-                    total += len(chunk)
-            dt = time.perf_counter() - start
-            return (total * 8) / (dt * 1_000_000) if dt > 0 else 0.0
-    except Exception:
-        return 0.0
-
-
-async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool] | None:
+async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float] | None:
     async with sem:
         port = _free_port()
         cfg = _vless_to_singbox(uri, port)
@@ -188,21 +172,25 @@ async def _check_one(uri: str, sem: asyncio.Semaphore) -> tuple[str, float, bool
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             await asyncio.sleep(0.8)
             proxy = f"http://127.0.0.1:{port}"
+            best_latency = None
             try:
-                started = time.perf_counter()
-                async with httpx.AsyncClient(proxy=proxy, timeout=CHECK_TIMEOUT) as c:
-                    r = await c.get("https://www.cloudflare.com")
-                    r.raise_for_status()
-                latency = time.perf_counter() - started
-                if latency > MAX_LATENCY:
-                    return None
-                if SPEED_LIMIT > 0:
-                    spd = await _measure_speed(proxy)
-                    if spd < SPEED_LIMIT:
-                        return None
-                log.info(f"OK: {latency:.3f}s {uri.strip()[:80]}")
-                return uri.strip(), latency
-            except Exception:
+                for attempt in range(RETRIES):
+                    try:
+                        started = time.perf_counter()
+                        async with httpx.AsyncClient(proxy=proxy, timeout=CHECK_TIMEOUT) as c:
+                            r = await c.get("https://www.cloudflare.com")
+                            r.raise_for_status()
+                        latency = time.perf_counter() - started
+                        if latency <= MAX_LATENCY:
+                            if best_latency is None or latency < best_latency:
+                                best_latency = latency
+                            break
+                    except Exception:
+                        if attempt < RETRIES - 1:
+                            await asyncio.sleep(0.3)
+                if best_latency is not None:
+                    log.info(f"OK: {best_latency:.3f}s {uri.strip()[:80]}")
+                    return uri.strip(), best_latency
                 return None
             finally:
                 _inc_progress()

@@ -4,7 +4,7 @@ Checker — сбор VLESS из git-репозитория igareck/vpn-configs-f
 """
 import os, logging, subprocess
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 log = logging.getLogger("checker")
 
@@ -22,12 +22,11 @@ REPO_DIR = Path(os.environ.get("REPO_DIR", "/app/data/repo"))
 # Файлы для парсинга
 SOURCE_FILES = [
     "WHITE-CIDR-RU-checked.txt",
+    "WHITE-CIDR-RU-all.txt",
+    "WHITE-SNI-RU-all.txt",
+    "Vless-Reality-White-Lists-Rus-Mobile.txt",
+    "Vless-Reality-White-Lists-Rus-Mobile-2.txt",
 ]
-
-
-def _node_label(uri: str) -> str:
-    frag = urlparse(uri).fragment or ""
-    return unquote(frag).lower()
 
 
 def _clone_or_pull():
@@ -61,9 +60,6 @@ def fetch_and_check() -> list[str]:
         text = fpath.read_text(encoding="utf-8", errors="ignore")
         lines = [l.strip() for l in text.splitlines()
                  if l.strip().startswith("vless://")]
-        lines = [l for l in lines
-                 if "russia" not in _node_label(l)
-                 and "anycast" not in _node_label(l)]
         log.info(f"  {fname}: {len(lines)} VLESS")
         all_lines.extend(lines)
 
